@@ -186,6 +186,21 @@ cat > ~/.openclaw/exec-approvals.json << 'EOF'
   }
 }
 EOF
+
+# agents 섹션 추가 (cat 덮어쓰기 대신 python3로 읽어서 병합 — socket 섹션 보존)
+python3 << 'PYEOF'
+import json
+with open('/root/.openclaw/exec-approvals.json', 'r') as f:
+    d = json.load(f)
+d['agents'] = {
+    "orchestrator": {"commands": [{"pattern": "gog", "action": "allow"}]},
+    "mail":         {"commands": [{"pattern": "gog", "action": "allow"}]},
+    "calendar":     {"commands": [{"pattern": "gog", "action": "allow"}]},
+    "drive":        {"commands": [{"pattern": "gog", "action": "allow"}]}
+}
+with open('/root/.openclaw/exec-approvals.json', 'w') as f:
+    json.dump(d, f, indent=2)
+PYEOF
 log_ok "exec-approvals.json 설정 완료"
 
 # ── 5. proxy.js 기동 ──────────────────────────────────────
