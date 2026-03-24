@@ -245,7 +245,14 @@ if [ "$READY" = false ]; then
 fi
 log_ok "openclaw gateway 기동 완료"
 
-# ── 7. 완료 메시지 ────────────────────────────────────────
+# ── 7. exec 승인 설정 적용 ────────────────────────────────
+# 파일 수정만으로는 gateway에 반영되지 않으므로 명령어로 직접 적용
+log_doing "exec 승인 설정 적용"
+openclaw approvals set ~/.openclaw/exec-approvals.json 2>/dev/null \
+  && log_ok "exec 승인 설정 적용 완료" \
+  || log_warn "exec 승인 설정 적용 실패 — gateway 재시작 후 자동 반영될 수 있음"
+
+# ── 8. 완료 메시지 ────────────────────────────────────────
 echo ""
 log_done "모든 서비스 기동 완료"
 echo ""
