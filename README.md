@@ -1,146 +1,270 @@
 # openclaw-api-dev
 
-**AI 업무 비서팀** — Telegram 봇 하나로 Gmail·Google Calendar·Google Drive를 AI가 처리합니다.
+Telegram으로 Gmail / Calendar / Drive를 AI가 자동 처리하는 개인 업무 비서.
 
-OpenClaw 기반 오케스트레이션 멀티 에이전트 구조.
-Claude / GPT-4o / Gemini 외부 API를 사용하므로 **GPU 없이 일반 서버에서 바로 실행**됩니다.
-
----
-
-## ollama-dev와의 차이점
-
-| | [openclaw-ollama-dev](https://github.com/your-org/openclaw-ollama-dev) | openclaw-api-dev |
-|---|---|---|
-| 모델 실행 방식 | Ollama 로컬 모델 | 외부 API (Claude / GPT-4o / Gemini) |
-| GPU | 필요 (24~32GB VRAM) | 불필요 |
-| 모델 비용 | 없음 | API 사용량 기준 과금 |
-| 설치 시간 | 모델 다운로드 10~30분 | 즉시 |
-| 에이전트 구조 | 동일 | 동일 |
+OpenClaw 멀티에이전트 구조 + Anthropic API 기반으로 동작한다.
 
 ---
 
-## 지원 모델
+## 특징
 
-| 우선순위 | 환경변수 | 모델 | 특징 |
-|---|---|---|---|
-| 1순위 | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5` | OpenClaw 공식 추천, 프롬프트 인젝션 저항 최강 |
-| 2순위 | `OPENAI_API_KEY` | `gpt-4o` | 검증된 안정성, 높은 인지도 |
-| 3순위 | `GEMINI_API_KEY` | `gemini-2.5-flash` | 저비용 선택지 |
-
-여러 키가 설정되어 있으면 우선순위 높은 것 하나만 사용됩니다.
-
-> **DeepSeek은 지원하지 않습니다.** 데이터 프라이버시 이슈로 인해 업무용 에이전트에 적합하지 않습니다.
+- **OpenClaw 멀티에이전트** — orchestrator가 요청을 분석하고 전담 서브에이전트에 위임
+- **Anthropic API** — claude-sonnet-4-6(orchestrator), claude-haiku-4-5-20251001(서브에이전트)
+- **gcube GPU 컨테이너** — gcube 워크로드 환경에서 동작
+- **Google Workspace 완전 연동** — Gmail, Calendar, Drive 읽기/쓰기 모두 지원
 
 ---
 
-## 빠른 시작
+## 아키텍처
 
-### 1. 환경변수 설정
-
-```bash
-# API 키 (셋 중 하나 — 우선순위 순)
-export ANTHROPIC_API_KEY="sk-ant-..."       # 권장
-# export OPENAI_API_KEY="sk-..."
-# export GEMINI_API_KEY="AI..."
-
-# Telegram
-export TELEGRAM_BOT_TOKEN="your-bot-token"
-
-# Google OAuth
-export GOOGLE_CLIENT_ID="your-client-id"
-export GOOGLE_CLIENT_SECRET="your-client-secret"
-export GOOGLE_REFRESH_TOKEN="your-refresh-token"
-
-# GitHub
-export GITHUB_USER_EMAIL="your@email.com"
-export GITHUB_USER_NAME="Your Name"
-export GITHUB_LOGIN="your-github-id"
-export GITHUB_TOKEN="your-github-token"
+```
+사용자 (Telegram)
+    ↓
+gcube 외부 HTTPS
+    ↓
+proxy.js (0.0.0.0:8080)          ← Node.js 내장 http + net, WebSocket 터널 포함
+    ↓
+openclaw gateway (127.0.0.1:18789)
+    ↓
+orchestrator (ORCHESTRATOR_MODEL)
+  ├── mail      (MAIL_MODEL)      → Gmail
+  ├── calendar  (CALENDAR_MODEL)  → Google Calendar
+  └── drive     (DRIVE_MODEL)     → Google Drive / Docs / Sheets
 ```
 
-### 2. 설치 및 실행
+---
+
+## 주요 기능
+
+### Gmail
+- 메일 조회 / 검색
+- 메일 전송 / 답장 / 초안 작성
+- 라벨 지정 / 보관 / 휴지통 처리
+
+### Google Calendar
+- 일정 조회 / 등록 / 수정 / 삭제
+
+### Google Drive
+- 파일 검색 / 업로드 / 다운로드
+- 문서 내용 읽기 (Docs, Sheets, Slides)
+- MEMORY.md 자동 백업 / 복원
+
+### 자동화 (30분 주기 HEARTBEAT)
+- 미읽은 중요 메일 알림
+- 오늘 남은 일정 알림
+- MEMORY.md → Drive 자동 백업
+- Telegram에서 자동화 목록 확인 / 추가 / 제거
+
+### 기타
+- 웹 검색 (duckduckgo 플러그인)
+- 브라우저 자동화 (Chromium 헤드리스)
+- 실행 전 계획 확인 패턴 (모든 요청에 사용자 확인 후 실행)
+- 컨테이너 재배포 후 기억 복원
+
+---
+
+## 시작하기
+
+### 사전 준비
+
+- gcube 계정 및 컨테이너
+- Telegram Bot Token (BotFather에서 발급)
+- Anthropic API 키
+- Google Cloud Console OAuth 2.0 설정
+  - 필요한 스코프: Gmail, Calendar, Drive
+  - OAuth Playground에서 Refresh Token 발급
+  - **주의**: Testing 모드에서는 Refresh Token이 **7일마다 만료**됨
+    → Google Cloud Console에서 Production 전환 권장
+
+### 설치 및 실행
 
 ```bash
-# 1. 저장소 클론
-git clone https://github.com/your-org/openclaw-api-dev.git
-cd openclaw-api-dev
+git clone <repo>
+cp .env.example .env
+# .env 파일 편집 (필수 환경변수 입력)
 
-# 2. 실행 권한 부여
-chmod +x setup.sh setup-agent.sh
-
-# 3. OpenClaw 설치 + API 키 감지 + 모델 설정
-./setup.sh
-
-# 4. 에이전트 4개 등록
-./setup-agent.sh
-
-# 5. 시작
-openclaw start
+bash setup.sh        # 설치 및 초기 설정 (gogcli, OpenClaw, openclaw.json 생성)
+bash setup-agent.sh  # 에이전트 워크스페이스 구성 및 Google 연동 확인
+bash run.sh          # 서비스 기동
 ```
 
 ---
 
 ## 환경변수
 
-| 변수명 | 필수 여부 | 설명 |
+| 변수 | 필수 | 설명 |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | 셋 중 하나 필수 | Anthropic API 키 |
-| `OPENAI_API_KEY` | 셋 중 하나 필수 | OpenAI API 키 |
-| `GEMINI_API_KEY` | 셋 중 하나 필수 | Google Gemini API 키 |
-| `TELEGRAM_BOT_TOKEN` | 필수 | Telegram BotFather에서 발급 |
-| `GOOGLE_CLIENT_ID` | 필수 | Google Cloud Console에서 발급 |
-| `GOOGLE_CLIENT_SECRET` | 필수 | Google Cloud Console에서 발급 |
-| `GOOGLE_REFRESH_TOKEN` | 필수 | OAuth 인증 후 발급 |
-| `GITHUB_USER_EMAIL` | 필수 | GitHub 계정 이메일 |
-| `GITHUB_USER_NAME` | 필수 | GitHub 계정 이름 (실명, `git log`에 표시됨) |
-| `GITHUB_LOGIN` | 필수 | GitHub 로그인 아이디 (공백 없음, 예: `johndoe`) |
-| `GITHUB_TOKEN` | 필수 | GitHub Personal Access Token |
+| `TELEGRAM_BOT_TOKEN` | 필수 | BotFather에서 발급한 봇 토큰 |
+| `GOOGLE_CLIENT_ID` | 필수 | Google Cloud Console OAuth 2.0 클라이언트 ID |
+| `GOOGLE_CLIENT_SECRET` | 필수 | Google Cloud Console OAuth 2.0 클라이언트 시크릿 |
+| `GOOGLE_REFRESH_TOKEN` | 필수 | Google OAuth Refresh Token |
+| `GOOGLE_ACCOUNT` | 필수 | Google 계정 이메일 |
+| `ANTHROPIC_API_KEY` | 필수 | Anthropic API 키 |
+| `ORCHESTRATOR_MODEL` | 필수 | orchestrator용 모델 (계획·판단·종합 담당) |
+| `MAIL_MODEL` | 필수 | mail 에이전트용 모델 (Gmail 전담) |
+| `CALENDAR_MODEL` | 필수 | calendar 에이전트용 모델 (Calendar 전담) |
+| `DRIVE_MODEL` | 필수 | drive 에이전트용 모델 (Drive 전담) |
+| `FALLBACK_MODEL` | 필수 | 위 모델 실패 시 대체 모델 |
+| `DRIVE_MEMORY_FOLDER` | 선택 | MEMORY.md 백업 Drive 폴더명 (기본값: `openclaw-memory`) |
 
 ---
 
-## 파일 구조
+## 에이전트별 모델 설정 가이드
 
-```
-openclaw-api-dev/
-├── setup.sh                         # OpenClaw 설치 + API 키 감지 + 모델 설정
-├── setup-agent.sh                   # 에이전트 4개 등록
-│
-├── agents/
-│   ├── orchestrator/AGENTS.md       # 오케스트레이터 지침 (위임 로직)
-│   ├── mail/AGENTS.md               # 메일 에이전트 지침
-│   ├── calendar/AGENTS.md           # 일정 에이전트 지침
-│   └── drive/AGENTS.md              # 문서 에이전트 지침
-│
-└── skills/
-    ├── gmail/SKILL.md               # Gmail API 사용법
-    ├── calendar/SKILL.md            # Calendar API 사용법
-    └── drive/SKILL.md               # Drive/Docs API 사용법
-```
+| 에이전트 | 권장 모델 | 특징 |
+|---|---|---|
+| ORCHESTRATOR | claude-sonnet-4-6 | 계획/판단 최고 성능 |
+| MAIL/CALENDAR/DRIVE | claude-haiku-4-5-20251001 | 빠른 속도, 저렴한 비용 |
+| FALLBACK | claude-haiku-4-5-20251001 | 대체 모델 |
 
----
-
-## 런타임 모니터링
+**예시 (.env)**
 
 ```bash
-openclaw tui                    # 터미널 대시보드 (전체 현황)
-openclaw gateway logs --follow  # 실시간 처리 로그
-openclaw status                 # 게이트웨이·채널 상태 요약
-openclaw agents list            # 등록된 에이전트 확인
-openclaw agents bindings        # 봇↔에이전트 연결 확인
+ORCHESTRATOR_MODEL=anthropic/claude-sonnet-4-6
+MAIL_MODEL=anthropic/claude-haiku-4-5-20251001
+CALENDAR_MODEL=anthropic/claude-haiku-4-5-20251001
+DRIVE_MODEL=anthropic/claude-haiku-4-5-20251001
+FALLBACK_MODEL=anthropic/claude-haiku-4-5-20251001
 ```
 
 ---
 
-## 관련 레포
+## 포트 구조
 
-| 레포 | 설명 |
-|---|---|
-| [openclaw-ollama-dev](https://github.com/your-org/openclaw-ollama-dev) | Ollama 로컬 모델 버전 (GPU 필요, API 비용 없음) |
-| [openclaw-ollama-image](https://github.com/your-org/openclaw-ollama-image) | Ollama 버전 Docker 이미지 |
-| openclaw-api-image *(예정)* | API 버전 Docker 이미지 |
+```
+gcube 외부 HTTPS (443)
+    → proxy.js (0.0.0.0:8080)
+    → openclaw gateway (127.0.0.1:18789)
+```
+
+- `proxy.js`는 Node.js 내장 모듈(`http` + `net`)만 사용 — npm install 불필요
+- HTTP 일반 요청과 WebSocket Upgrade 요청 모두 처리
+- openclaw gateway는 loopback(`127.0.0.1`)에만 바인딩
 
 ---
 
-## 라이선스
+## Google OAuth 설정 방법
 
-MIT
+1. Google Cloud Console에서 OAuth 2.0 클라이언트 ID 생성
+2. 필요한 스코프 추가:
+   - `https://www.googleapis.com/auth/gmail.modify`
+   - `https://www.googleapis.com/auth/calendar`
+   - `https://www.googleapis.com/auth/drive`
+3. OAuth Playground에서 위 스코프로 Refresh Token 발급
+4. **주의**: OAuth Consent Screen이 Testing 모드이면 Refresh Token이 7일마다 만료됨
+   → Google Cloud Console에서 Production 전환 권장 (개인 사용 앱은 검수 없이 통과)
+
+---
+
+## MEMORY.md 백업 / 복원
+
+에이전트 기억(`MEMORY.md`)을 Drive에 자동으로 백업하고, 컨테이너 재배포 후에도 복원할 수 있다.
+
+**자동 백업**
+- 30분마다 HEARTBEAT 실행 시 `DRIVE_MEMORY_FOLDER` 폴더에 자동 업로드
+
+**수동 복원**
+1. Telegram에서 "이전 기억 복원해줘" 입력
+2. 복원 계획 확인 후 진행
+3. `/new` 명령어로 새 세션 시작 → 복원된 기억 반영
+
+컨테이너 재배포 후에도 Drive에서 이전 대화 맥락을 복원할 수 있다.
+
+---
+
+## 프로젝트 구조
+
+```
+.
+├── setup.sh              # 설치 및 초기 설정 (gogcli, OpenClaw, openclaw.json 생성)
+├── setup-agent.sh        # 에이전트 워크스페이스 구성 및 Google 연동 확인
+├── run.sh                # 서비스 기동
+├── proxy.js              # HTTP + WebSocket 프록시 (Node.js 내장 모듈)
+├── .env.example          # 환경변수 템플릿
+├── config/
+│   ├── workspace-orchestrator/  # 오케스트레이터 설정 (AGENTS, SOUL, TOOLS, HEARTBEAT 등)
+│   ├── workspace-mail/          # Gmail 에이전트 설정
+│   ├── workspace-calendar/      # Calendar 에이전트 설정
+│   └── workspace-drive/         # Drive 에이전트 설정
+└── spec/
+    ├── PRD.md            # 프로젝트 목표
+    ├── SPEC.md           # 기술 스펙
+    ├── HANDOVER.md       # 검증된 사항 기록
+    └── FEATURE.md        # 기능 추가 가이드
+```
+
+---
+
+## 운영 가이드
+
+### run.sh 재실행 방법
+
+run.sh를 재실행할 때는 기존 프로세스가 완전히 종료된 후 실행해야 함.
+연속으로 바로 실행하면 포트 충돌이 발생할 수 있음.
+
+```bash
+# 프로세스 완전 종료
+pkill -9 -f openclaw 2>/dev/null; true
+pkill -9 -f 'node.*proxy' 2>/dev/null; true
+sleep 5
+
+# 재실행
+bash run.sh
+```
+
+### Gateway Token 확인
+
+Control UI 접속 시 필요한 토큰 확인 방법:
+
+```bash
+# 토큰 확인
+python3 -c "import json; print(json.load(open('/root/.openclaw/openclaw.json'))['gateway']['auth']['token'])"
+
+# alias 등록해두면 편함 (한 번만 설정)
+echo "alias octoken=\"python3 -c \\\"import json; print(json.load(open('/root/.openclaw/openclaw.json'))['gateway']['auth']['token'])\\\"\"" >> ~/.bashrc
+source ~/.bashrc
+# 이후로는 octoken 입력
+```
+
+### Control UI 연결 및 해제
+
+Control UI와 Telegram은 같은 세션을 공유하므로
+Control UI Chat 탭에서 메시지를 보내면 Telegram 응답에 영향을 줌.
+
+- **Telegram**: 실제 사용 채널
+- **Control UI**: Sessions/Agents/Cron Jobs 모니터링 전용
+
+**Control UI 연결:**
+1. gcube 대시보드에서 서비스 URL 확인
+2. 브라우저에서 해당 URL 접속
+3. Gateway Token 입력 후 Connect
+4. 디바이스 승인 확인: `openclaw devices list`
+
+**Control UI 연결 해제:**
+```bash
+# 연결된 디바이스 목록 확인
+openclaw devices list
+
+# 특정 디바이스 해제
+openclaw devices revoke --device <deviceId> --role operator
+```
+
+**Telegram 연결:**
+- run.sh 실행 시 자동으로 연결 유지
+- device revoke와 무관하게 동작
+- 연결 확인: `openclaw agents bindings`
+
+### 로그 확인
+
+```bash
+tail -f ~/.openclaw/gateway.log   # gateway 오류
+tail -f ~/.openclaw/proxy.log     # 프록시 오류
+```
+
+---
+
+## 참고 문서
+
+- OpenClaw 공식 문서: https://docs.openclaw.ai
+- gogcli: https://github.com/steipete/gogcli
+- Anthropic API: https://docs.anthropic.com

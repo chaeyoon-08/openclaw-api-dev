@@ -1,199 +1,304 @@
 #!/bin/bash
 # =============================================================
 # openclaw-api-dev / setup.sh
-# OpenClaw 설치 + API 키 감지 + 모델 설정 스크립트
+# gogcli + OpenClaw 설치 및 초기 설정 스크립트 (Anthropic API 버전)
 #
-# 모델 우선순위 (환경변수 감지 순서):
-#   1. ANTHROPIC_API_KEY  → claude-sonnet-4-5  (OpenClaw 공식 추천)
-#   2. OPENAI_API_KEY     → gpt-4o             (검증된 안정성)
-#   3. GEMINI_API_KEY     → gemini-2.5-flash   (저비용 선택지)
-#
-# 필수 환경변수 (셋 중 하나):
-#   ANTHROPIC_API_KEY     — Anthropic API 키
-#   OPENAI_API_KEY        — OpenAI API 키
-#   GEMINI_API_KEY        — Google Gemini API 키
-#
-# 필수 환경변수 (공통):
-#   TELEGRAM_BOT_TOKEN    — Telegram 봇 토큰 (BotFather에서 발급)
-#   GOOGLE_CLIENT_ID      — Google Cloud Console OAuth 클라이언트 ID
-#   GOOGLE_CLIENT_SECRET  — Google Cloud Console OAuth 클라이언트 시크릿
-#   GOOGLE_REFRESH_TOKEN  — Google OAuth Refresh Token
-#   GITHUB_USER_EMAIL     — GitHub 계정 이메일
-#   GITHUB_USER_NAME      — GitHub 계정 이름 (실명, git log에 표시)
-#   GITHUB_LOGIN          — GitHub 로그인 아이디 (공백 없음, 예: johndoe)
-#   GITHUB_TOKEN          — GitHub Personal Access Token
+# 참고 문서:
+#   OpenClaw  : https://docs.openclaw.ai
+#   gogcli    : https://github.com/steipete/gogcli
+#   NodeSource: https://github.com/nodesource/distributions
+#   Go        : https://go.dev/dl
 # =============================================================
 
 set -eo pipefail
 
+# ── 로그 함수 ──────────────────────────────────────────────
+BOLD_BLUE='\033[1;34m'
+CYAN='\033[0;36m'
 GREEN='\033[0;32m'
+BOLD_GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
-CYAN='\033[0;36m'
+BOLD_RED='\033[1;31m'
 NC='\033[0m'
 
-info()    { echo -e "${GREEN}[INFO]${NC}  $1"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC}  $1"; }
-error()   { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
-section() { echo -e "\n${CYAN}▶ $1${NC}"; }
+log_start()  { echo -e "${BOLD_BLUE}[ START ]${NC} $1"; }
+log_doing()  { echo -e "${CYAN}[ DOING ]${NC} $1"; }
+log_ok()     { echo -e "${GREEN}[  OK   ]${NC} $1"; }
+log_warn()   { echo -e "${YELLOW}[ WARN  ]${NC} $1"; }
+log_error()  { echo -e "${RED}[ ERROR ]${NC} $1"; }
+log_stop()   { echo -e "${BOLD_RED}[ STOP  ]${NC} $1"; exit 1; }
+log_done()   { echo -e "${BOLD_GREEN}[ DONE  ]${NC} $1"; }
+log_next()   { echo -e "${BOLD_GREEN}[ NEXT  ]${NC} $1"; }
 
-echo ""
-echo "=================================================="
-echo "  OpenClaw API 버전 설치 스크립트"
-echo "  (오케스트레이션 멀티 에이전트 구조)"
-echo "=================================================="
-echo ""
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OPENCLAW_DIR="$HOME/.openclaw"
 
-# ── 1. Node.js 확인 ───────────────────────────────────────
-section "Node.js 확인"
+log_start "OpenClaw API 설치 시작"
 
-if ! command -v node &>/dev/null; then
-  error "Node.js 18 이상이 필요합니다. https://nodejs.org 에서 설치해 주세요."
+# ── 1. .env 검증 ──────────────────────────────────────────
+log_doing "환경변수 확인"
+
+if [ -f "$SCRIPT_DIR/.env" ]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$SCRIPT_DIR/.env"
+  set +a
+  log_ok ".env 로드 완료"
 fi
 
-NODE_MAJOR=$(node -e "process.stdout.write(process.version.slice(1).split('.')[0])")
-if [ "$NODE_MAJOR" -lt 18 ]; then
-  error "Node.js 18 이상이 필요합니다. 현재 버전: $(node --version)"
-fi
-info "Node.js $(node --version) 확인됨"
+MISSING=()
+for VAR in TELEGRAM_BOT_TOKEN GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET \
+           GOOGLE_REFRESH_TOKEN ANTHROPIC_API_KEY \
+           ORCHESTRATOR_MODEL MAIL_MODEL CALENDAR_MODEL \
+           DRIVE_MODEL FALLBACK_MODEL; do
+  [ -z "${!VAR}" ] && MISSING+=("$VAR")
+done
 
-# ── 2. OpenClaw 설치 ──────────────────────────────────────
-section "OpenClaw 설치"
+if [ ${#MISSING[@]} -gt 0 ]; then
+  log_error "미설정 환경변수:"
+  for V in "${MISSING[@]}"; do
+    echo "        - $V"
+  done
+  log_stop ".env 파일을 확인하고 모든 필수 변수를 설정하세요."
+fi
+
+log_ok "환경변수 확인 완료"
+log_ok "  orchestrator: $ORCHESTRATOR_MODEL"
+log_ok "  mail:         $MAIL_MODEL"
+log_ok "  calendar:     $CALENDAR_MODEL"
+log_ok "  drive:        $DRIVE_MODEL"
+log_ok "  fallback:     $FALLBACK_MODEL"
+
+# ── 2. Node.js 확인 ───────────────────────────────────────
+log_doing "Node.js 확인"
+
+NODE_OK=false
+if command -v node &>/dev/null; then
+  NODE_MAJOR=$(node -e "process.stdout.write(process.version.slice(1).split('.')[0])")
+  if [ "$NODE_MAJOR" -ge 22 ]; then
+    NODE_OK=true
+    log_ok "Node.js $(node --version) 확인됨"
+  else
+    log_warn "Node.js $(node --version) — 22 미만, 재설치합니다."
+  fi
+else
+  log_warn "Node.js 미설치"
+fi
+
+if [ "$NODE_OK" = false ]; then
+  log_doing "Node.js 22 설치 중..."
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  apt-get install -y nodejs
+  log_ok "Node.js $(node --version) 설치 완료"
+fi
+
+# ── 3. gogcli 설치 ────────────────────────────────────────
+log_doing "gogcli 확인"
+
+if ! command -v gog &>/dev/null; then
+  # go.mod에서 요구 Go 버전 동적으로 읽기
+  log_doing "gogcli 요구 Go 버전 확인 중..."
+  GO_REQUIRED=$(curl -s https://raw.githubusercontent.com/steipete/gogcli/main/go.mod \
+    | grep '^go ' | awk '{print $2}')
+
+  [ -z "$GO_REQUIRED" ] && log_stop "gogcli go.mod에서 Go 버전을 읽지 못했습니다."
+  log_ok "gogcli 요구 Go 버전: $GO_REQUIRED"
+
+  # 공식 Go 바이너리 설치
+  log_doing "Go $GO_REQUIRED 설치 중..."
+  GO_TAR="go${GO_REQUIRED}.linux-amd64.tar.gz"
+  curl -fOL "https://go.dev/dl/${GO_TAR}" \
+    || log_stop "Go $GO_REQUIRED 다운로드 실패"
+  rm -rf /usr/local/go
+  tar -C /usr/local -xzf "$GO_TAR"
+  rm -f "$GO_TAR"
+  export PATH=$PATH:/usr/local/go/bin
+  log_ok "Go $(go version) 설치 완료"
+
+  # 빌드 의존성 및 gogcli 빌드
+  log_doing "빌드 의존성 설치 중..."
+  apt-get install -y make build-essential -qq
+
+  log_doing "gogcli 빌드 중..."
+  cd /tmp
+  rm -rf gogcli
+  git clone https://github.com/steipete/gogcli.git
+  cd gogcli
+  make || log_stop "gogcli make 실패"
+  cp bin/gog /usr/local/bin/gog
+  chmod +x /usr/local/bin/gog
+  cd "$SCRIPT_DIR"
+  log_ok "gogcli 설치 완료: $(gog --version)"
+else
+  log_ok "gogcli 이미 설치됨: $(gog --version)"
+fi
+
+# ── 3-1. Chromium 헤드리스 설치 ──────────────────────────
+# Ubuntu 24.04에서 chromium-browser는 snap wrapper라 CAP_SETFCAP 오류 발생
+# xtradeb PPA(ppa:xtradeb/apps)를 통해 deb 패키지로 설치
+log_doing "Chromium 확인"
+
+if ! command -v chromium &>/dev/null; then
+  log_doing "Chromium 설치 중 (xtradeb PPA)..."
+  apt-mark hold snapd 2>/dev/null || true
+  apt-get install -y software-properties-common -qq
+  add-apt-repository ppa:xtradeb/apps -y
+  apt-get update -qq
+  if apt-get install -y chromium --no-install-recommends -qq 2>/dev/null; then
+    log_ok "Chromium 설치 완료: $(chromium --version 2>/dev/null | head -1)"
+  else
+    log_warn "Chromium 설치 실패 — 브라우저 자동화 비활성화. 핵심 기능에는 영향 없음"
+  fi
+else
+  log_ok "Chromium 이미 설치됨: $(chromium --version 2>/dev/null | head -1)"
+fi
+
+# ── 4. OpenClaw 설치 ──────────────────────────────────────
+log_doing "OpenClaw 확인"
 
 if ! command -v openclaw &>/dev/null; then
-  npm install -g openclaw
-  info "OpenClaw 설치 완료"
+  log_doing "OpenClaw 설치 중..."
+  npm install -g openclaw || log_stop "OpenClaw 설치 실패"
+  log_ok "OpenClaw 설치 완료: $(openclaw --version)"
 else
-  info "OpenClaw 이미 설치됨: $(openclaw --version)"
+  log_ok "OpenClaw 이미 설치됨: $(openclaw --version)"
 fi
 
-# ── 3. OpenClaw 워크스페이스 초기화 ───────────────────────
-section "OpenClaw 워크스페이스 초기화"
+# ── 5. openclaw.json 생성 ─────────────────────────────────
+# ref: https://docs.openclaw.ai
+log_doing "openclaw.json 생성 중..."
 
-openclaw setup --workspace .
-info "워크스페이스 초기화 완료"
-
-# ── 4. API 키 감지 및 모델 선택 ───────────────────────────
-section "API 키 감지"
-
-PROVIDER=""
-MODEL_ID=""
-API_KEY=""
-
-if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  PROVIDER="anthropic"
-  MODEL_ID="claude-sonnet-4-5"
-  API_KEY="$ANTHROPIC_API_KEY"
-  info "Anthropic API 키 감지됨 → 모델: $MODEL_ID"
-elif [ -n "${OPENAI_API_KEY:-}" ]; then
-  PROVIDER="openai"
-  MODEL_ID="gpt-4o"
-  API_KEY="$OPENAI_API_KEY"
-  info "OpenAI API 키 감지됨 → 모델: $MODEL_ID"
-elif [ -n "${GEMINI_API_KEY:-}" ]; then
-  PROVIDER="google"
-  MODEL_ID="gemini-2.5-flash"
-  API_KEY="$GEMINI_API_KEY"
-  info "Gemini API 키 감지됨 → 모델: $MODEL_ID"
-else
-  echo ""
-  echo -e "${RED}[ERROR]${NC} API 키가 설정되지 않았습니다."
-  echo ""
-  echo "  셋 중 하나를 설정해 주세요:"
-  echo "    export ANTHROPIC_API_KEY='...'   (권장: claude-sonnet-4-5)"
-  echo "    export OPENAI_API_KEY='...'      (gpt-4o)"
-  echo "    export GEMINI_API_KEY='...'      (gemini-2.5-flash)"
-  echo ""
-  exit 1
-fi
-
-# ── 5. 공통 환경변수 확인 ─────────────────────────────────
-section "환경변수 확인"
-
-: "${TELEGRAM_BOT_TOKEN:?'TELEGRAM_BOT_TOKEN 이 설정되지 않았습니다 (@BotFather에서 발급)'}"
-: "${GOOGLE_CLIENT_ID:?'GOOGLE_CLIENT_ID 가 설정되지 않았습니다'}"
-: "${GOOGLE_CLIENT_SECRET:?'GOOGLE_CLIENT_SECRET 이 설정되지 않았습니다'}"
-: "${GOOGLE_REFRESH_TOKEN:?'GOOGLE_REFRESH_TOKEN 이 설정되지 않았습니다'}"
-: "${GITHUB_USER_EMAIL:?'GITHUB_USER_EMAIL 이 설정되지 않았습니다'}"
-: "${GITHUB_USER_NAME:?'GITHUB_USER_NAME 이 설정되지 않았습니다'}"
-: "${GITHUB_LOGIN:?'GITHUB_LOGIN 이 설정되지 않았습니다 (GitHub 로그인 아이디, 공백 없음, 예: johndoe)'}"
-: "${GITHUB_TOKEN:?'GITHUB_TOKEN 이 설정되지 않았습니다'}"
-
-info "환경변수 확인 완료"
-
-# ── 6. Git 설정 ───────────────────────────────────────────
-section "Git 전역 설정"
-
-git config --global user.email "$GITHUB_USER_EMAIL"
-git config --global user.name  "$GITHUB_USER_NAME"
-git config --global credential.helper store
-echo "https://${GITHUB_LOGIN}:${GITHUB_TOKEN}@github.com" > ~/.git-credentials
-chmod 600 ~/.git-credentials
-info "Git 설정 완료"
-
-# ── 7. OpenClaw 모델 설정 ─────────────────────────────────
-section "OpenClaw 모델 설정"
-
-OPENCLAW_DIR="$HOME/.openclaw"
 mkdir -p "$OPENCLAW_DIR"
+GW_TOKEN=$(openssl rand -hex 24)
 
-# .env 생성
-{
-  printf 'GOOGLE_CLIENT_ID=%s\n'       "${GOOGLE_CLIENT_ID}"
-  printf 'GOOGLE_CLIENT_SECRET=%s\n'   "${GOOGLE_CLIENT_SECRET}"
-  printf 'GOOGLE_REFRESH_TOKEN=%s\n'   "${GOOGLE_REFRESH_TOKEN}"
-  printf 'TELEGRAM_BOT_TOKEN=%s\n'     "${TELEGRAM_BOT_TOKEN}"
-  printf 'PROVIDER=%s\n'               "${PROVIDER}"
-  printf 'MODEL_ID=%s\n'               "${MODEL_ID}"
-  printf 'API_KEY=%s\n'                "${API_KEY}"
-} > "$OPENCLAW_DIR/.env"
-chmod 600 "$OPENCLAW_DIR/.env"
-info ".env 생성 완료"
-
-# openclaw.json 생성
 cat > "$OPENCLAW_DIR/openclaw.json" << EOF
 {
   "models": {
-    "mode": "merge",
     "providers": {
-      "${PROVIDER}": {
-        "apiKey": "${API_KEY}"
+      "anthropic": {
+        "apiKey": "${ANTHROPIC_API_KEY}"
       }
     }
   },
   "agents": {
     "defaults": {
-      "model": {
-        "primary": "${PROVIDER}/${MODEL_ID}"
+      "compaction": {
+        "mode": "safeguard"
+      },
+      "subagents": {
+        "runTimeoutSeconds": 120
       }
-    }
+    },
+    "list": [
+      {
+        "id": "orchestrator",
+        "workspace": "${OPENCLAW_DIR}/workspace-orchestrator",
+        "model": {
+          "primary": "${ORCHESTRATOR_MODEL}",
+          "fallbacks": ["${FALLBACK_MODEL}"]
+        },
+        "subagents": {
+          "allowAgents": ["mail", "calendar", "drive"]
+        }
+      },
+      {
+        "id": "mail",
+        "workspace": "${OPENCLAW_DIR}/workspace-mail",
+        "model": {
+          "primary": "${MAIL_MODEL}",
+          "fallbacks": ["${FALLBACK_MODEL}"]
+        }
+      },
+      {
+        "id": "calendar",
+        "workspace": "${OPENCLAW_DIR}/workspace-calendar",
+        "model": {
+          "primary": "${CALENDAR_MODEL}",
+          "fallbacks": ["${FALLBACK_MODEL}"]
+        }
+      },
+      {
+        "id": "drive",
+        "workspace": "${OPENCLAW_DIR}/workspace-drive",
+        "model": {
+          "primary": "${DRIVE_MODEL}",
+          "fallbacks": ["${FALLBACK_MODEL}"]
+        }
+      }
+    ]
   },
+  "bindings": [
+    { "agentId": "orchestrator", "match": { "channel": "telegram" } }
+  ],
   "channels": {
     "telegram": {
       "botToken": "${TELEGRAM_BOT_TOKEN}",
       "dmPolicy": "open",
+      "dmScope": "per-channel-peer",
       "allowFrom": ["*"]
     }
   },
   "env": {
-    "GOOGLE_CLIENT_ID": "${GOOGLE_CLIENT_ID}",
-    "GOOGLE_CLIENT_SECRET": "${GOOGLE_CLIENT_SECRET}",
-    "GOOGLE_REFRESH_TOKEN": "${GOOGLE_REFRESH_TOKEN}"
+    "GOG_ACCOUNT": "${GOOGLE_ACCOUNT}",
+    "GOG_ACCESS_TOKEN": ""
+  },
+  "tools": {
+    "exec": {
+      "enabled": true,
+      "host": "gateway"
+    }
+  },
+  "plugins": {
+    "entries": {
+      "telegram": {
+        "enabled": true
+      },
+      "duckduckgo": {
+        "enabled": true
+      }
+    }
   },
   "gateway": {
-    "mode": "local"
+    "port": 18789,
+    "mode": "local",
+    "bind": "loopback",
+    "trustedProxies": ["127.0.0.1"],
+    "controlUi": {
+      "dangerouslyAllowHostHeaderOriginFallback": true
+    },
+    "auth": {
+      "mode": "token",
+      "token": "${GW_TOKEN}"
+    }
   }
 }
 EOF
-info "openclaw.json 생성 완료 (모델: ${PROVIDER}/${MODEL_ID})"
+
+log_ok "openclaw.json 생성 완료: $OPENCLAW_DIR/openclaw.json"
+
+# ── 6. ~/.openclaw/.env 생성 ──────────────────────────────
+log_doing "~/.openclaw/.env 생성 중..."
+
+{
+  printf 'TELEGRAM_BOT_TOKEN=%s\n'    "${TELEGRAM_BOT_TOKEN}"
+  printf 'GOOGLE_CLIENT_ID=%s\n'      "${GOOGLE_CLIENT_ID}"
+  printf 'GOOGLE_CLIENT_SECRET=%s\n'  "${GOOGLE_CLIENT_SECRET}"
+  printf 'GOOGLE_REFRESH_TOKEN=%s\n'  "${GOOGLE_REFRESH_TOKEN}"
+  printf 'GOOGLE_ACCOUNT=%s\n'        "${GOOGLE_ACCOUNT:-}"
+  printf 'ANTHROPIC_API_KEY=%s\n'     "${ANTHROPIC_API_KEY}"
+  printf 'ORCHESTRATOR_MODEL=%s\n'    "${ORCHESTRATOR_MODEL}"
+  printf 'MAIL_MODEL=%s\n'            "${MAIL_MODEL}"
+  printf 'CALENDAR_MODEL=%s\n'        "${CALENDAR_MODEL}"
+  printf 'DRIVE_MODEL=%s\n'           "${DRIVE_MODEL}"
+  printf 'FALLBACK_MODEL=%s\n'        "${FALLBACK_MODEL}"
+  printf 'DRIVE_MEMORY_FOLDER=%s\n'   "${DRIVE_MEMORY_FOLDER:-openclaw-memory}"
+} > "$OPENCLAW_DIR/.env"
+chmod 600 "$OPENCLAW_DIR/.env"
+
+log_ok "~/.openclaw/.env 생성 완료 (chmod 600)"
 
 # ── 완료 ──────────────────────────────────────────────────
 echo ""
-echo "=================================================="
-echo "  기본 설치 완료!"
-echo ""
-echo "  ✅ 선택된 모델: ${PROVIDER}/${MODEL_ID}"
-echo ""
-echo "  다음 단계: ./setup-agent.sh 실행"
-echo "=================================================="
-echo ""
+log_done "설치 완료"
+log_next "다음 단계: bash setup-agent.sh"
