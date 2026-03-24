@@ -187,7 +187,9 @@ cat > "$OPENCLAW_DIR/openclaw.json" << EOF
   "models": {
     "providers": {
       "anthropic": {
-        "apiKey": "${ANTHROPIC_API_KEY}"
+        "apiKey": "${ANTHROPIC_API_KEY}",
+        "baseUrl": "https://api.anthropic.com",
+        "models": []
       }
     }
   },
@@ -245,7 +247,6 @@ cat > "$OPENCLAW_DIR/openclaw.json" << EOF
     "telegram": {
       "botToken": "${TELEGRAM_BOT_TOKEN}",
       "dmPolicy": "open",
-      "dmScope": "per-channel-peer",
       "allowFrom": ["*"]
     }
   },
@@ -255,7 +256,6 @@ cat > "$OPENCLAW_DIR/openclaw.json" << EOF
   },
   "tools": {
     "exec": {
-      "enabled": true,
       "host": "gateway"
     }
   },
