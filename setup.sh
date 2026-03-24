@@ -135,20 +135,30 @@ else
 fi
 
 # ── 3-1. Chromium 헤드리스 설치 ──────────────────────────
-# Ubuntu 24.04에서 chromium-browser는 snap wrapper라 CAP_SETFCAP 오류 발생
-# xtradeb PPA(ppa:xtradeb/apps)를 통해 deb 패키지로 설치
+# Debian: apt-get으로 직접 설치 (PPA 불필요)
+# Ubuntu: chromium-browser는 snap wrapper라 CAP_SETFCAP 오류 발생
+#         → xtradeb PPA(ppa:xtradeb/apps)를 통해 deb 패키지로 설치
 log_doing "Chromium 확인"
 
 if ! command -v chromium &>/dev/null; then
-  log_doing "Chromium 설치 중 (xtradeb PPA)..."
-  apt-mark hold snapd 2>/dev/null || true
-  apt-get install -y software-properties-common -qq
-  add-apt-repository ppa:xtradeb/apps -y
-  apt-get update -qq
-  if apt-get install -y chromium --no-install-recommends -qq 2>/dev/null; then
-    log_ok "Chromium 설치 완료: $(chromium --version 2>/dev/null | head -1)"
+  if [ -f /etc/debian_version ] && ! [ -f /etc/lsb-release ]; then
+    log_doing "Chromium 설치 중 (Debian)..."
+    if apt-get install -y chromium --no-install-recommends -qq 2>/dev/null; then
+      log_ok "Chromium 설치 완료: $(chromium --version 2>/dev/null | head -1)"
+    else
+      log_warn "Chromium 설치 실패 — 브라우저 자동화 비활성화. 핵심 기능에는 영향 없음"
+    fi
   else
-    log_warn "Chromium 설치 실패 — 브라우저 자동화 비활성화. 핵심 기능에는 영향 없음"
+    log_doing "Chromium 설치 중 (Ubuntu, xtradeb PPA)..."
+    apt-mark hold snapd 2>/dev/null || true
+    apt-get install -y software-properties-common -qq
+    add-apt-repository ppa:xtradeb/apps -y
+    apt-get update -qq
+    if apt-get install -y chromium --no-install-recommends -qq 2>/dev/null; then
+      log_ok "Chromium 설치 완료: $(chromium --version 2>/dev/null | head -1)"
+    else
+      log_warn "Chromium 설치 실패 — 브라우저 자동화 비활성화. 핵심 기능에는 영향 없음"
+    fi
   fi
 else
   log_ok "Chromium 이미 설치됨: $(chromium --version 2>/dev/null | head -1)"
