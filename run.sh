@@ -187,20 +187,6 @@ cat > ~/.openclaw/exec-approvals.json << 'EOF'
 }
 EOF
 
-# agents 섹션 추가 (cat 덮어쓰기 대신 python3로 읽어서 병합 — socket 섹션 보존)
-python3 << 'PYEOF'
-import json
-with open('/root/.openclaw/exec-approvals.json', 'r') as f:
-    d = json.load(f)
-d['agents'] = {
-    "orchestrator": {"commands": [{"pattern": "gog", "action": "allow"}]},
-    "mail":         {"commands": [{"pattern": "gog", "action": "allow"}]},
-    "calendar":     {"commands": [{"pattern": "gog", "action": "allow"}]},
-    "drive":        {"commands": [{"pattern": "gog", "action": "allow"}]}
-}
-with open('/root/.openclaw/exec-approvals.json', 'w') as f:
-    json.dump(d, f, indent=2)
-PYEOF
 log_ok "exec-approvals.json 설정 완료"
 
 # ── 5. proxy.js 기동 ──────────────────────────────────────
@@ -262,6 +248,16 @@ if [ "$READY" = false ]; then
 fi
 log_ok "openclaw gateway 기동 완료"
 
+# exec allowlist 등록 (gateway 뜬 직후)
+openclaw approvals allowlist add --agent "*" "/usr/local/bin/gog" 2>/dev/null \
+  && log_ok "gog exec allowlist 등록 완료" \
+  || log_warn "gog exec allowlist 등록 실패 — 수동으로 등록 필요"
+
+# 등록 확인
+if openclaw approvals get 2>/dev/null | grep -c "gog" > /dev/null 2>&1; then
+  log_ok "exec allowlist 확인 완료"
+fi
+
 # ── 7. exec 승인 설정 적용 ────────────────────────────────
 # 파일 수정만으로는 gateway에 반영되지 않으므로 명령어로 직접 적용
 log_doing "exec 승인 설정 적용"
@@ -269,13 +265,7 @@ openclaw approvals set ~/.openclaw/exec-approvals.json 2>/dev/null \
   && log_ok "exec 승인 설정 적용 완료" \
   || log_warn "exec 승인 설정 적용 실패 — gateway 재시작 후 자동 반영될 수 있음"
 
-# ── 8. exec allowlist 등록 ────────────────────────────────
-log_doing "exec allowlist 등록"
-openclaw approvals allowlist add --agent "*" "/usr/local/bin/gog" 2>/dev/null \
-  && log_ok "exec allowlist 등록 완료 (gog)" \
-  || log_warn "exec allowlist 등록 실패 — 수동으로 등록 필요"
-
-# ── 9. 완료 메시지 ────────────────────────────────────────
+# ── 8. 완료 메시지 ────────────────────────────────────────
 echo ""
 log_done "모든 서비스 기동 완료"
 echo ""
