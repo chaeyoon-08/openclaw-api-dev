@@ -52,7 +52,7 @@ for VAR in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REFRESH_TOKEN ORCHESTRAT
   [ -z "${!VAR}" ] && log_stop "$VAR 미설정. setup.sh 를 먼저 실행해 주세요."
 done
 
-log_ok "환경변수 로드 완료 / orchestrator: $ORCHESTRATOR_MODEL / fallback: $FALLBACK_MODEL"
+log_ok "환경변수 로드 완료 / orchestrator: $ORCHESTRATOR_MODEL"
 
 # ── 1. 기존 프로세스 정리 ─────────────────────────────────
 log_doing "기존 프로세스 정리"
