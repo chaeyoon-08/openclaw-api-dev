@@ -240,8 +240,25 @@ for i in $(seq 1 30); do
 done
 
 if [ "$READY" = false ]; then
-  log_error "openclaw gateway 기동 타임아웃 (30초)"
-  log_stop "로그 확인: tail -f $GATEWAY_LOG"
+  log_warn "gateway 기동 실패 — doctor --fix 실행 중..."
+  openclaw doctor --fix >> "$GATEWAY_LOG" 2>&1 || true
+  sleep 5
+
+  # 재시도 (동일한 30초 타임아웃)
+  openclaw gateway >> "$GATEWAY_LOG" 2>&1 &
+  READY=false
+  for i in $(seq 1 30); do
+    if curl -sf http://127.0.0.1:18789/ &>/dev/null; then
+      READY=true
+      break
+    fi
+    sleep 1
+  done
+
+  if [ "$READY" = false ]; then
+    log_error "openclaw gateway 기동 타임아웃 (재시도 포함 60초)"
+    log_stop "로그 확인: tail -f $GATEWAY_LOG"
+  fi
 fi
 log_ok "openclaw gateway 기동 완료"
 
@@ -252,7 +269,13 @@ openclaw approvals set ~/.openclaw/exec-approvals.json 2>/dev/null \
   && log_ok "exec 승인 설정 적용 완료" \
   || log_warn "exec 승인 설정 적용 실패 — gateway 재시작 후 자동 반영될 수 있음"
 
-# ── 8. 완료 메시지 ────────────────────────────────────────
+# ── 8. exec allowlist 등록 ────────────────────────────────
+log_doing "exec allowlist 등록"
+openclaw approvals allowlist add --agent "*" "/usr/local/bin/gog" 2>/dev/null \
+  && log_ok "exec allowlist 등록 완료 (gog)" \
+  || log_warn "exec allowlist 등록 실패 — 수동으로 등록 필요"
+
+# ── 9. 완료 메시지 ────────────────────────────────────────
 echo ""
 log_done "모든 서비스 기동 완료"
 echo ""
