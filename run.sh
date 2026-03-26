@@ -122,6 +122,7 @@ import json
 with open('/root/.openclaw/openclaw.json', 'r') as f:
     d = json.load(f)
 d['env']['GOG_ACCESS_TOKEN'] = '${ACCESS_TOKEN}'
+d['tools'] = {'profile': 'full', 'exec': {'host': 'gateway', 'security': 'full', 'ask': 'off'}}
 with open('/root/.openclaw/openclaw.json', 'w') as f:
     json.dump(d, f, indent=2)
 " 2>/dev/null || log_warn "openclaw.json GOG_ACCESS_TOKEN 업데이트 실패"
