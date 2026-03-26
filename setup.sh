@@ -232,8 +232,11 @@ cat > "$OPENCLAW_DIR/openclaw.json" << EOF
     "GOG_ACCESS_TOKEN": ""
   },
   "tools": {
+    "profile": "full",
     "exec": {
-      "host": "gateway"
+      "host": "gateway",
+      "security": "full",
+      "ask": "off"
     }
   },
   "plugins": {
