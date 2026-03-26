@@ -224,7 +224,7 @@ cat > "$OPENCLAW_DIR/openclaw.json" << EOF
   },
   "session": {
     "reset": {
-      "mode": "never"
+      "mode": "daily"
     }
   },
   "env": {
